@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Fazenda KakaPelek</title>
+  <title>Farming Now</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -11,6 +11,7 @@
 
   <!-- BOTÕES DE CANTO (SEMPRE VISÍVEIS) -->
   <div id="corner-buttons">
+    <button id="btn-pause-menu" class="corner-btn" title="Menu">☰</button>
     <button id="btn-mute" class="corner-btn" title="Ativar/Desativar som">🔊</button>
     <button id="btn-fullscreen" class="corner-btn" title="Tela cheia">⛶</button>
   </div>
@@ -20,7 +21,7 @@
     <div class="menu-card">
       <div class="menu-header">
         <span class="leaf-icon">🌿</span>
-        <h1>Fazenda KakaPelek</h1>
+        <h1>Farming Now</h1>
         <span class="leaf-icon">🌾</span>
       </div>
       <p class="menu-subtitle">Apresentado por <b>Old Now Games</b></p>
@@ -80,6 +81,12 @@
   <div id="quest-complete-toast" class="hidden">
     🎉 MISSÃO CONCLUÍDA! <br>
     <small id="toast-reward-text">+20 Moedas recebidas!</small>
+  </div>
+
+  <!-- BANNER DE CONQUISTA DESBLOQUEADA -->
+  <div id="achievement-toast" class="hidden">
+    🏆 CONQUISTA DESBLOQUEADA! <br>
+    <small id="achievement-toast-text">Mestre Fazendeiro</small>
   </div>
 
   <!-- MODAL INVENTÁRIO -->
@@ -161,11 +168,54 @@
             <small style="color:#d7ccc8">Iniciou sua vida no campo.</small>
           </div>
         </div>
-        <div class="mission-item-card">
+        <div id="achievement-master-farmer" class="mission-item-card">
           <div>
             <div style="font-weight:bold; color: #fff">🚜 Mestre Fazendeiro</div>
             <small style="color:#d7ccc8">Conclua todas as missões do tutorial.</small>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MENU DE PAUSA -->
+  <div id="pause-modal" class="hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>⏸ Menu</h2>
+        <button id="close-pause-btn" class="close-btn">&times;</button>
+      </div>
+
+      <!-- VISÃO PRINCIPAL DO MENU -->
+      <div id="pause-main-view">
+        <div class="pause-menu-buttons">
+          <button id="btn-resume" class="farm-btn play-btn">▶ Continuar Jogando</button>
+          <button id="btn-sound-toggle" class="farm-btn secondary-btn">🔊 Som: Ativado</button>
+          <button id="btn-show-controls" class="farm-btn secondary-btn">🎮 Ver Controles</button>
+          <button id="btn-main-menu" class="farm-btn secondary-btn">🏠 Voltar ao Menu Principal</button>
+          <button id="btn-restart" class="farm-btn danger-btn">🔄 Reiniciar Jogo</button>
+        </div>
+      </div>
+
+      <!-- CONFIRMAÇÃO DE REINÍCIO -->
+      <div id="pause-confirm-restart" class="hidden">
+        <p class="pause-warning-text">⚠️ Tem certeza? Isso vai apagar <b>todo o seu progresso</b>: moedas, animais, plantações, laticínios e missões.</p>
+        <div class="pause-menu-buttons">
+          <button id="btn-confirm-restart" class="farm-btn danger-btn">Sim, Reiniciar Tudo</button>
+          <button id="btn-cancel-restart" class="farm-btn secondary-btn">Cancelar</button>
+        </div>
+      </div>
+
+      <!-- TELA DE CONTROLES -->
+      <div id="pause-controls-view" class="hidden">
+        <div class="controls-list">
+          <p>🕹️ <b>W A S D</b> — Andar pelo mapa</p>
+          <p>✋ <b>E</b> — Interagir / Coletar</p>
+          <p>🔁 <b>Q</b> — Trocar semente equipada</p>
+          <p>⎋ <b>ESC</b> — Abrir/Fechar este menu</p>
+        </div>
+        <div class="pause-menu-buttons">
+          <button id="btn-back-from-controls" class="farm-btn secondary-btn">Voltar</button>
         </div>
       </div>
     </div>

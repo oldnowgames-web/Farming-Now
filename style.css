@@ -283,6 +283,24 @@ body {
   100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
 }
 
+#achievement-toast {
+  position: absolute;
+  top: 95px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #4e342e;
+  color: #ffd54f;
+  border: 3px solid #ffd54f;
+  padding: 12px 28px;
+  border-radius: 30px;
+  font-family: 'Fredoka One', cursive;
+  font-size: 18px;
+  text-align: center;
+  z-index: 1000;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+  animation: popup 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
 /* ================= HUD EM JOGO (TOPO DIREITO) ================= */
 #hud {
   position: absolute;
@@ -356,7 +374,7 @@ body {
 }
 
 /* ================= MODAIS & ABAS ================= */
-#inventory-modal, #shop-modal, #missions-modal, #achievements-modal {
+#inventory-modal, #shop-modal, #missions-modal, #achievements-modal, #dairy-modal, #pause-modal {
   position: absolute;
   top: 0;
   left: 0;
@@ -718,6 +736,13 @@ body {
     padding: 10px 20px;
     max-width: 90vw;
   }
+
+  #achievement-toast {
+    top: 75px;
+    font-size: 14px;
+    padding: 10px 20px;
+    max-width: 90vw;
+  }
 }
 
 @media (max-width: 400px) {
@@ -746,5 +771,69 @@ body {
     width: 64px;
     height: 64px;
     font-size: 22px;
+  }
+}
+/* ================= MENU DE PAUSA ================= */
+.pause-menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.danger-btn {
+  background: #e53935;
+  color: white;
+  box-shadow: 0 6px 0 #b71c1c;
+  text-shadow: 1px 1px 0 #7f0000;
+}
+
+.danger-btn:hover {
+  background: #ef5350;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 0 #b71c1c;
+}
+
+.danger-btn:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 #b71c1c;
+}
+
+.pause-warning-text {
+  color: #ffccbc;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+  background: #3e2723;
+  border: 2px solid #e53935;
+  border-radius: 10px;
+  padding: 14px;
+  margin: 0 0 18px 0;
+}
+
+.controls-list {
+  background: #3e2723;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+
+.controls-list p {
+  margin: 8px 0;
+  font-size: 14px;
+  color: #d7ccc8;
+}
+
+.controls-list b {
+  color: #ffeb3b;
+}
+
+@media (max-width: 768px) {
+  .pause-warning-text {
+    font-size: 12px;
+    padding: 10px;
+  }
+
+  .controls-list p {
+    font-size: 12px;
   }
 }

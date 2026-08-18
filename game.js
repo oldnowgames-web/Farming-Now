@@ -43,11 +43,43 @@ function registerQuestAction(actionType) {
       playerData.coins += currentQuest.rewardCoins;
       showQuestToast(currentQuest.rewardCoins);
       currentQuestIndex++;
+
+      // Todas as missões do tutorial concluídas: desbloqueia a conquista "Mestre Fazendeiro"
+      if (currentQuestIndex >= questList.length) {
+        unlockMasterFarmerAchievement();
+      }
     }
 
     updateQuestHUD();
     updateUIElements();
   }
+}
+
+let masterFarmerUnlocked = false;
+function unlockMasterFarmerAchievement() {
+  if (masterFarmerUnlocked) return;
+  masterFarmerUnlocked = true;
+
+  const card = document.getElementById('achievement-master-farmer');
+  if (card) {
+    card.classList.add('done');
+    card.innerHTML = `
+      <div>
+        <div style="font-weight:bold; color: #ffeb3b">🚜 Mestre Fazendeiro ✅</div>
+        <small style="color:#d7ccc8">Conclua todas as missões do tutorial.</small>
+      </div>
+    `;
+  }
+
+  playSound('achievement');
+
+  // Mostra o banner de conquista um pouco depois do toast de missão, para não sobrepor
+  setTimeout(() => {
+    const toast = document.getElementById('achievement-toast');
+    if (!toast) return;
+    toast.classList.remove('hidden');
+    setTimeout(() => toast.classList.add('hidden'), 3500);
+  }, 600);
 }
 
 function showQuestToast(reward) {
@@ -97,7 +129,11 @@ const sounds = {
   drop: new Audio('sounds/drop.mp3'),
   till: new Audio('sounds/drop.mp3'),
   plant: new Audio('sounds/semente.mp3'),
-  water: new Audio('sounds/regar.mp3')
+  water: new Audio('sounds/regar.mp3'),
+  cow: new Audio('sounds/cow.mp3'),
+  chicken: new Audio('sounds/chicken.mp3'),
+  sheep: new Audio('sounds/sheep.mp3'),
+  achievement: new Audio('sounds/conquest.mp3')
 };
 sounds.walk.loop = true;
 sounds.walk.volume = 0.35;
@@ -106,6 +142,13 @@ sounds.drop.volume = 0.6;
 sounds.till.volume = 0.6;
 sounds.plant.volume = 0.6;
 sounds.water.volume = 0.6;
+sounds.cow.loop = true;
+sounds.chicken.loop = true;
+sounds.sheep.loop = true;
+sounds.cow.volume = 0.55;
+sounds.chicken.volume = 0.55;
+sounds.sheep.volume = 0.55;
+sounds.achievement.volume = 0.7;
 
 // Música de fundo (loop, separada dos efeitos sonoros pois toca continuamente)
 const backgroundMusic = new Audio('sounds/farmingnow.mp3');
@@ -155,6 +198,29 @@ function stopWalkSound() {
   sounds.walk.pause();
 }
 
+// Sons ambiente dos animais (mugido/cacarejo/balido): tocam em loop enquanto o
+// jogador estiver perto do cercado, e param assim que ele se afasta.
+const animalLoopState = { cow: false, chicken: false, sheep: false };
+
+function startAnimalSound(key) {
+  if (isMuted || animalLoopState[key]) return;
+  const audio = sounds[key];
+  if (!audio) return;
+  animalLoopState[key] = true;
+  audio.play().catch(() => {});
+}
+
+function stopAnimalSound(key) {
+  if (!animalLoopState[key]) return;
+  animalLoopState[key] = false;
+  const audio = sounds[key];
+  if (audio) audio.pause();
+}
+
+function stopAllAnimalSounds() {
+  Object.keys(animalLoopState).forEach(stopAnimalSound);
+}
+
 // Inicia a música de fundo (chamado no clique de "Jogar", já dentro do gesto do usuário)
 function startBackgroundMusic() {
   if (isMuted) return;
@@ -167,6 +233,7 @@ function toggleMute() {
   backgroundMusic.muted = isMuted;
   if (isMuted) {
     stopWalkSound();
+    stopAllAnimalSounds();
   } else if (isGameStarted) {
     startBackgroundMusic();
   }
@@ -503,6 +570,10 @@ function createPen(center, size, type) {
   // Posição interativa na frente do cercado
   const collectPos = new THREE.Vector3(center.x, 0, center.z + half + 0.8);
   animalTypes[type].collectPos = collectPos;
+
+  // Centro do cercado + raio de aproximação (usado para tocar o som ao se aproximar do animal)
+  animalTypes[type].penCenterVec = new THREE.Vector3(center.x, 0, center.z);
+  animalTypes[type].approachRadius = half + 3.5;
 
   // BALÃO FLUTUANTE 3D (Sem poste de madeira!)
   const initialText = `${animalTypes[type].productIcon} x0`;
@@ -1655,6 +1726,13 @@ window.addEventListener('keydown', (e) => {
   if (keys.hasOwnProperty(key)) keys[key] = true;
   if (key === 'e') handleGlobalInteraction();
   if (key === 'q') cycleSelectedSeed();
+  if (key === 'escape') {
+    if (!pauseModal.classList.contains('hidden')) {
+      closePauseMenu();
+    } else if (!isAnyOtherModalOpen()) {
+      openPauseMenu();
+    }
+  }
 });
 
 window.addEventListener('keyup', (e) => {
@@ -1672,6 +1750,7 @@ function resetAllKeys() {
   keys.s = false;
   keys.d = false;
   resetJoystick();
+  stopAllAnimalSounds();
 }
 window.addEventListener('blur', resetAllKeys);
 document.addEventListener('visibilitychange', () => {
@@ -1869,8 +1948,29 @@ function interactWithNearestPlot() {
   }
 }
 
+// Toca o som do animal (mugido, cacarejo, balido) em loop enquanto o jogador
+// estiver perto do cercado, e para assim que ele se afasta. Só toca se o
+// jogador já tiver comprado ao menos 1 daquele animal.
+function checkAnimalApproachSounds() {
+  for (let key in animalTypes) {
+    const config = animalTypes[key];
+    if (!config.penCenterVec) continue;
+
+    const owned = (playerData.animals[key] || 0) > 0;
+    const dist = playerGroup.position.distanceTo(config.penCenterVec);
+    const isNear = owned && dist <= config.approachRadius;
+
+    if (isNear) {
+      startAnimalSound(key);
+    } else {
+      stopAnimalSound(key);
+    }
+  }
+}
+
 function checkProximityPrompts() {
   if (!isGameStarted) return;
+  checkAnimalApproachSounds();
   const distToShop = playerGroup.position.distanceTo(shopInteractionPos);
   
   if (distToShop <= 3.0) {
@@ -1968,9 +2068,17 @@ const achievementsModal = document.getElementById('achievements-modal');
 
 // Verifica se algum modal/menu está aberto — usado para travar o movimento
 // do personagem e evitar que ele ande sozinho ao reabrir a janela do jogo.
+const allModalIds = ['inventory-modal', 'shop-modal', 'missions-modal', 'achievements-modal', 'dairy-modal', 'pause-modal'];
 function isAnyModalOpen() {
-  const modalIds = ['inventory-modal', 'shop-modal', 'missions-modal', 'achievements-modal', 'dairy-modal'];
-  return modalIds.some(id => {
+  return allModalIds.some(id => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+}
+
+// Usado pela tecla ESC: só abre o menu de pausa se nenhum outro modal já estiver aberto
+function isAnyOtherModalOpen() {
+  return allModalIds.filter(id => id !== 'pause-modal').some(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
   });
@@ -1985,6 +2093,70 @@ document.getElementById('close-inventory-btn').onclick = () => inventoryModal.cl
 document.getElementById('close-shop-btn').onclick = () => shopModal.classList.add('hidden');
 
 document.getElementById('close-dairy-btn').onclick = () => closeDairyModal();
+
+// ---------------- MENU DE PAUSA ----------------
+const pauseModal = document.getElementById('pause-modal');
+
+function showPauseView(view) {
+  document.getElementById('pause-main-view').classList.toggle('hidden', view !== 'main');
+  document.getElementById('pause-confirm-restart').classList.toggle('hidden', view !== 'confirm-restart');
+  document.getElementById('pause-controls-view').classList.toggle('hidden', view !== 'controls');
+}
+
+function updateSoundToggleButtonText() {
+  const btn = document.getElementById('btn-sound-toggle');
+  if (btn) btn.textContent = isMuted ? '🔇 Som: Desativado' : '🔊 Som: Ativado';
+}
+
+function openPauseMenu() {
+  if (!isGameStarted) return;
+  resetAllKeys();
+  showPauseView('main');
+  updateSoundToggleButtonText();
+  pauseModal.classList.remove('hidden');
+}
+
+function closePauseMenu() {
+  pauseModal.classList.add('hidden');
+}
+
+function togglePauseMenu() {
+  if (pauseModal.classList.contains('hidden')) {
+    openPauseMenu();
+  } else {
+    closePauseMenu();
+  }
+}
+
+// Recarrega a página inteira: forma mais simples e segura de resetar 100%
+// do estado do jogo (moedas, animais, plantações, missões, fábrica, etc.)
+function restartGame() {
+  location.reload();
+}
+
+// Volta para a tela de título SEM apagar o progresso (diferente de "Reiniciar")
+function goToMainMenuFromPause() {
+  closePauseMenu();
+  isGameStarted = false;
+  resetAllKeys();
+  stopWalkSound();
+  stopAllAnimalSounds();
+  document.getElementById('main-menu').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('quest-hud').classList.add('hidden');
+  document.getElementById('mobile-controls').classList.add('hidden');
+}
+
+document.getElementById('btn-pause-menu').addEventListener('click', () => togglePauseMenu());
+document.getElementById('close-pause-btn').onclick = () => closePauseMenu();
+document.getElementById('btn-resume').onclick = () => closePauseMenu();
+document.getElementById('btn-sound-toggle').onclick = () => { toggleMute(); updateSoundToggleButtonText(); };
+document.getElementById('btn-show-controls').onclick = () => showPauseView('controls');
+document.getElementById('btn-back-from-controls').onclick = () => showPauseView('main');
+document.getElementById('btn-restart').onclick = () => showPauseView('confirm-restart');
+document.getElementById('btn-cancel-restart').onclick = () => showPauseView('main');
+document.getElementById('btn-confirm-restart').onclick = () => restartGame();
+document.getElementById('btn-main-menu').onclick = () => goToMainMenuFromPause();
 
 function checkCollision(targetPosition) {
   playerBox.setFromCenterAndSize(
