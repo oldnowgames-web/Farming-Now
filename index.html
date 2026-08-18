@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Fazenda KakaPelek</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <!-- BOTÕES DE CANTO (SEMPRE VISÍVEIS) -->
+  <div id="corner-buttons">
+    <button id="btn-mute" class="corner-btn" title="Ativar/Desativar som">🔊</button>
+    <button id="btn-fullscreen" class="corner-btn" title="Tela cheia">⛶</button>
+  </div>
+
+  <!-- MENU PRINCIPAL -->
+  <div id="main-menu">
+    <div class="menu-card">
+      <div class="menu-header">
+        <span class="leaf-icon">🌿</span>
+        <h1>Fazenda KakaPelek</h1>
+        <span class="leaf-icon">🌾</span>
+      </div>
+      <p class="menu-subtitle">Apresentado por <b>Old Now Games</b></p>
+
+      <div class="menu-buttons">
+        <button id="btn-play" class="farm-btn play-btn">▶ Jogar</button>
+        <button id="btn-achievements-menu" class="farm-btn secondary-btn">🏆 Conquistas</button>
+      </div>
+
+      <div class="menu-footer">
+        <small>Use W, A, S, D para andar • E para interagir/coletar • Q para trocar semente</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD TOPO ESQUERDO (MISSÃO ATIVA + BOTÃO MISSÕES) -->
+  <div id="quest-hud" class="hidden">
+    <div class="quest-card">
+      <div class="quest-header">
+        <span class="quest-badge">🎯 MISSÃO ATIVA</span>
+        <span id="quest-reward" class="quest-reward">+15 💰</span>
+      </div>
+      <h3 id="quest-title">1. Arar a Terra</h3>
+      <p id="quest-desc">Are 3 canteiros de terra usando E.</p>
+      <div class="quest-progress-bar">
+        <div id="quest-progress-fill"></div>
+      </div>
+      <div class="quest-count-text">
+        <span id="quest-progress-text">0 / 3</span>
+      </div>
+    </div>
+    <button id="btn-open-missions-hud" class="quest-btn">📜 Missões</button>
+  </div>
+
+  <!-- HUD TOPO DIREITO -->
+  <div id="hud" class="hidden">
+    <div class="item">💰 Moedas: <span id="coins-count">20</span></div>
+    <div class="item">
+      🌱 Equipado: 
+      <select id="seed-select" onchange="changeSelectedSeed(this.value)">
+        <option value="wheat_seed">🌾 Trigo</option>
+        <option value="carrot_seed">🥕 Cenoura</option>
+        <option value="tomato_seed">🍅 Tomate</option>
+        <option value="corn_seed">🌽 Milho</option>
+        <option value="pumpkin_seed">🎃 Abóbora</option>
+      </select>
+    </div>
+    <button id="open-inventory-btn">🎒 Inventário</button>
+  </div>
+  
+  <!-- AVISO DE INTERAÇÃO FLUTUANTE -->
+  <div id="action-prompt" class="hidden">
+    <p id="prompt-text">Aperte <b>E</b> para interagir</p>
+  </div>
+
+  <!-- BANNER NOTIFICAÇÃO DE MISSÃO CONCLUÍDA -->
+  <div id="quest-complete-toast" class="hidden">
+    🎉 MISSÃO CONCLUÍDA! <br>
+    <small id="toast-reward-text">+20 Moedas recebidas!</small>
+  </div>
+
+  <!-- MODAL INVENTÁRIO -->
+  <div id="inventory-modal" class="hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>🎒 Meu Inventário</h2>
+        <button id="close-inventory-btn" class="close-btn">&times;</button>
+      </div>
+      
+      <div class="tab-buttons">
+        <button class="tab-btn active" onclick="switchInvTab('items')">Sementes & Colheitas</button>
+        <button class="tab-btn" onclick="switchInvTab('animals')">🐾 Meus Animais</button>
+      </div>
+
+      <div id="inventory-list-items"></div>
+      <div id="inventory-list-animals" class="hidden"></div>
+    </div>
+  </div>
+
+  <!-- MODAL DA LOJA -->
+  <div id="shop-modal" class="hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>🛒 Mercadinho da Fazenda</h2>
+        <button id="close-shop-btn" class="close-btn">&times;</button>
+      </div>
+
+      <div class="tab-buttons">
+        <button class="tab-btn active" id="tab-shop-seeds" onclick="switchShopTab('seeds')">🌱 Sementes</button>
+        <button class="tab-btn" id="tab-shop-animals" onclick="switchShopTab('animals')">🐓 Animais</button>
+        <button class="tab-btn" id="tab-shop-buildings" onclick="switchShopTab('buildings')">🏭 Construções</button>
+      </div>
+
+      <div id="shop-list-seeds"></div>
+      <div id="shop-list-animals" class="hidden"></div>
+      <div id="shop-list-buildings" class="hidden"></div>
+    </div>
+  </div>
+
+  <!-- MODAL DA FÁBRICA DE LATICÍNIOS -->
+  <div id="dairy-modal" class="hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>🏭 Fábrica de Laticínios</h2>
+        <button id="close-dairy-btn" class="close-btn">&times;</button>
+      </div>
+
+      <p class="dairy-milk-count">🥛 Leite disponível: <span id="dairy-milk-count">0</span></p>
+
+      <div id="dairy-progress-box" class="hidden"></div>
+
+      <div id="dairy-recipes-list"></div>
+    </div>
+  </div>
+
+  <!-- MODAL DE TODAS AS MISSÕES -->
+  <div id="missions-modal" class="hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>📜 Diário de Missões</h2>
+        <button id="close-missions-btn" class="close-btn">&times;</button>
+      </div>
+      <div id="missions-list"></div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONQUISTAS -->
+  <div id="achievements-modal" class="hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>🏆 Conquistas</h2>
+        <button id="close-achievements-btn" class="close-btn">&times;</button>
+      </div>
+      <div id="achievements-list">
+        <div class="mission-item-card done">
+          <div>
+            <div style="font-weight:bold; color: #ffeb3b">🌱 Primeiros Passos ✅</div>
+            <small style="color:#d7ccc8">Iniciou sua vida no campo.</small>
+          </div>
+        </div>
+        <div class="mission-item-card">
+          <div>
+            <div style="font-weight:bold; color: #fff">🚜 Mestre Fazendeiro</div>
+            <small style="color:#d7ccc8">Conclua todas as missões do tutorial.</small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTROLES MOBILE (JOYSTICK + BOTÕES DE AÇÃO) -->
+  <div id="mobile-controls" class="hidden">
+    <div id="joystick-zone">
+      <div id="joystick-base">
+        <div id="joystick-knob"></div>
+      </div>
+    </div>
+    <div id="mobile-action-buttons">
+      <button id="btn-mobile-seed" class="mobile-btn">🔄</button>
+      <button id="btn-mobile-interact" class="mobile-btn interact-btn">E</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
