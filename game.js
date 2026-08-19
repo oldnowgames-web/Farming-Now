@@ -245,11 +245,17 @@ function toggleMute() {
 // 1. CENA, CÂMERA E RENDERIZADOR
 // ===============================================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
+const skyColor = 0x8ecae6;
+scene.background = new THREE.Color(skyColor);
+// Névoa suave: dá profundidade e esconde a borda do terreno no horizonte
+scene.fog = new THREE.Fog(skyColor, 34, 62);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 const colliders = [];
@@ -257,20 +263,144 @@ const colliders = [];
 // ===============================================
 // 2. ILUMINAÇÃO
 // ===============================================
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+// Luz hemisférica: tom de céu vindo de cima + tom de grama refletindo de baixo.
+// Deixa a iluminação ambiente muito mais natural do que um branco liso.
+const hemiLight = new THREE.HemisphereLight(0xbfe3ff, 0x6b8e4e, 0.55);
+scene.add(hemiLight);
+
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.25);
 scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-dirLight.position.set(20, 40, 20);
+const dirLight = new THREE.DirectionalLight(0xfff4e0, 0.95);
+dirLight.position.set(22, 34, 16);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.left = -38;
+dirLight.shadow.camera.right = 38;
+dirLight.shadow.camera.top = 38;
+dirLight.shadow.camera.bottom = -38;
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far = 90;
+dirLight.shadow.bias = -0.0025;
 scene.add(dirLight);
+scene.add(dirLight.target);
+
+// Luz de preenchimento fria vinda do lado oposto, bem sutil — suaviza sombras
+// muito duras sem lavar o visual "voxel" original dos personagens/animais.
+const fillLight = new THREE.DirectionalLight(0xbcd4ff, 0.18);
+fillLight.position.set(-18, 14, -14);
+scene.add(fillLight);
+
+// ---------- CÉU EM GRADIENTE (cúpula) ----------
+// Substitui o fundo de cor sólida por um degradê azul-claro -> horizonte
+// esbranquiçado, gerado via canvas e projetado numa esfera gigante ao redor da cena.
+function createSkyDomeTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, '#4a90d9');
+  grad.addColorStop(0.55, '#8ecae6');
+  grad.addColorStop(1, '#dff3f9');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+const skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(300, 24, 16),
+  new THREE.MeshBasicMaterial({ map: createSkyDomeTexture(), side: THREE.BackSide, fog: false })
+);
+scene.add(skyDome);
+
+// ---------- NUVENS DECORATIVAS DE FUNDO ----------
+const decorativeClouds = [];
+function createDecorativeCloud(x, y, z, scale) {
+  const cloudGroup = new THREE.Group();
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, fog: false });
+  const puffPositions = [[0, 0, 0], [1.1, 0.15, 0.2], [-1.1, 0.1, -0.1], [0.5, 0.5, 0.1], [-0.5, 0.4, 0]];
+  puffPositions.forEach(([px, py, pz]) => {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 8), cloudMat);
+    puff.position.set(px, py, pz);
+    cloudGroup.add(puff);
+  });
+  cloudGroup.position.set(x, y, z);
+  cloudGroup.scale.set(scale, scale * 0.6, scale);
+  scene.add(cloudGroup);
+  decorativeClouds.push({ group: cloudGroup, baseX: x, speed: 0.15 + Math.random() * 0.1 });
+}
+
+createDecorativeCloud(-25, 22, -30, 3);
+createDecorativeCloud(15, 26, -35, 4);
+createDecorativeCloud(35, 20, -10, 2.5);
+createDecorativeCloud(-35, 24, 5, 3.5);
+createDecorativeCloud(0, 28, -40, 3);
+
+function animateDecorativeClouds() {
+  const t = Date.now() * 0.00002;
+  decorativeClouds.forEach(c => {
+    c.group.position.x = c.baseX + Math.sin(t * 10 * c.speed) * 4;
+  });
+}
 
 // ===============================================
 // 3. TERRENO PRINCIPAL & CENÁRIO
 // ===============================================
+// Gera uma textura de grama com variação de tom (ao invés de verde sólido chapado),
+// repetida (tiled) várias vezes pelo terreno para dar mais riqueza visual sem
+// pesar no desempenho.
+function createGrassTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#4caf50';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Manchas orgânicas de tons de verde mais claros/escuros
+  const shades = ['#43a047', '#5cb860', '#3f9142', '#66bb6a'];
+  for (let i = 0; i < 260; i++) {
+    ctx.fillStyle = shades[i % shades.length];
+    ctx.globalAlpha = 0.35;
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    const r = 3 + Math.random() * 9;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Pequenos traços de "fio de grama"
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = '#2e7d32';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 420; i++) {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (Math.random() - 0.5) * 4, y - 4 - Math.random() * 3);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(16, 16);
+  return texture;
+}
+
 const groundGeo = new THREE.PlaneGeometry(60, 60);
-const groundMat = new THREE.MeshLambertMaterial({ color: 0x4caf50 });
+const groundMat = new THREE.MeshLambertMaterial({ map: createGrassTexture() });
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
 scene.add(ground);
 
 function createTree(x, z) {
@@ -279,14 +409,32 @@ function createTree(x, z) {
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5d4037 });
   const trunk = new THREE.Mesh(trunkGeo, trunkMat);
   trunk.position.y = 1;
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
 
-  const leavesGeo = new THREE.ConeGeometry(1.5, 3, 8);
-  const leavesMat = new THREE.MeshLambertMaterial({ color: 0x2e7d32 });
-  const leaves = new THREE.Mesh(leavesGeo, leavesMat);
-  leaves.position.y = 3;
+  // Copa em duas camadas (cone maior embaixo + cone menor em cima, tons
+  // diferentes de verde) — dá mais volume e profundidade do que um cone só.
+  const leavesMatBase = new THREE.MeshLambertMaterial({ color: 0x2e7d32 });
+  const leavesMatTop = new THREE.MeshLambertMaterial({ color: 0x388e3c });
 
-  treeGroup.add(trunk, leaves);
+  const leavesBase = new THREE.Mesh(new THREE.ConeGeometry(1.6, 2.4, 8), leavesMatBase);
+  leavesBase.position.y = 2.6;
+  leavesBase.castShadow = true;
+  leavesBase.receiveShadow = true;
+
+  const leavesTop = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.0, 8), leavesMatTop);
+  leavesTop.position.y = 3.9;
+  leavesTop.castShadow = true;
+  leavesTop.receiveShadow = true;
+
+  treeGroup.add(trunk, leavesBase, leavesTop);
   treeGroup.position.set(x, 0, z);
+
+  // Pequena variação orgânica de escala/rotação para cada árvore não parecer clonada
+  const scaleVariation = 0.85 + Math.random() * 0.35;
+  treeGroup.scale.set(scaleVariation, scaleVariation, scaleVariation);
+  treeGroup.rotation.y = Math.random() * Math.PI * 2;
+
   scene.add(treeGroup);
 }
 
@@ -296,6 +444,10 @@ createTree(18, -8);
 createTree(20, 2);
 createTree(-15, 15);
 createTree(15, 15);
+createTree(-20, 8);
+createTree(22, -18);
+createTree(-8, -22);
+createTree(10, 20);
 
 function createFenceRow(startX, startZ, length, isHorizontal = true, includeLastRail = false) {
   const fenceGroup = new THREE.Group();
@@ -328,6 +480,12 @@ function createFenceRow(startX, startZ, length, isHorizontal = true, includeLast
   }
 
   fenceGroup.position.set(startX, 0, startZ);
+  fenceGroup.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
   scene.add(fenceGroup);
 
   const boxWidth = isHorizontal ? length + (includeLastRail ? 1 : 0.2) : 0.4;
@@ -394,6 +552,12 @@ function createHouse(x, z) {
 
   houseGroup.add(walls, roof, door);
   houseGroup.position.set(x, 0, z);
+  houseGroup.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
   scene.add(houseGroup);
 
   const houseBox = new THREE.Box3();
@@ -426,6 +590,12 @@ function createShopBuilding(x, z) {
 
   shopGroup.add(walls, roof, door, sign, signText);
   shopGroup.position.set(x, 0, z);
+  shopGroup.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
   scene.add(shopGroup);
 
   const shopBox = new THREE.Box3();
@@ -468,6 +638,12 @@ function createDairyFactoryBuilding(x, z) {
 
   factoryGroup.add(walls, roof, door, silo, siloTop, sign, signText);
   factoryGroup.position.set(x, 0, z);
+  factoryGroup.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
   scene.add(factoryGroup);
 
   const factoryBox = new THREE.Box3();
@@ -607,6 +783,8 @@ function addPart(group, geometry, color, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz
   const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color }));
   mesh.position.set(x, y, z);
   mesh.rotation.set(rx, ry, rz);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   group.add(mesh);
   return mesh;
 }
@@ -1331,6 +1509,8 @@ function addCropPart(group, geometry, color, x = 0, y = 0, z = 0, rx = 0, ry = 0
   const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color }));
   mesh.position.set(x, y, z);
   mesh.rotation.set(rx, ry, rz);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   group.add(mesh);
   return mesh;
 }
@@ -1570,6 +1750,8 @@ for (let r = 0; r < gridRows; r++) {
     plot.position.x = (c - (gridCols - 1) / 2) * plotSize;
     plot.position.z = (r - (gridRows - 1) / 2) * plotSize - 5;
     plot.position.y = 0.05;
+    plot.castShadow = true;
+    plot.receiveShadow = true;
 
     plot.userData = { state: 0, cropMesh: null, plantedCrop: null, timer: null };
     scene.add(plot);
@@ -1699,6 +1881,12 @@ headGroup.position.y = 1.5 + 0.23;
 playerGroup.add(headGroup);
 
 playerGroup.position.set(0, 0, 3);
+playerGroup.traverse((child) => {
+  if (child.isMesh) {
+    child.castShadow = true;
+    child.receiveShadow = true;
+  }
+});
 scene.add(playerGroup);
 
 let walkCycle = 0;
@@ -1846,6 +2034,69 @@ const moveSpeed = 0.15;
 const cameraOffset = new THREE.Vector3(0, 8, 12);
 const interactionDistance = 2.5;
 
+// ===============================================
+// SISTEMA DE PARTÍCULAS (efeitos visuais leves)
+// ===============================================
+// Pequenas esferas que nascem num ponto, voam/flutuam e desaparecem com fade.
+// Usado para dar "vida" às ações de arar, plantar, regar e colher.
+const activeParticles = [];
+
+function spawnParticleBurst(position, options = {}) {
+  const count = options.count || 8;
+  const color = options.color || 0xffffff;
+  const size = options.size || 0.07;
+  const spread = options.spread !== undefined ? options.spread : 1;
+  const gravity = options.gravity || 0; // negativo = puxa pra baixo (efeito de gota d'água)
+  const life = options.life || 550;
+
+  for (let i = 0; i < count; i++) {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, fog: false });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(size, 6, 6), mat);
+    mesh.position.set(
+      position.x + (Math.random() - 0.5) * 0.35,
+      position.y + 0.15 + Math.random() * 0.2,
+      position.z + (Math.random() - 0.5) * 0.35
+    );
+    scene.add(mesh);
+
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (0.015 + Math.random() * 0.02) * spread;
+    activeParticles.push({
+      mesh,
+      vx: Math.cos(angle) * speed,
+      vy: options.upward !== undefined ? options.upward : (0.025 + Math.random() * 0.02),
+      vz: Math.sin(angle) * speed,
+      gravity,
+      startTime: Date.now(),
+      life
+    });
+  }
+}
+
+function updateParticles() {
+  if (activeParticles.length === 0) return;
+  const now = Date.now();
+  for (let i = activeParticles.length - 1; i >= 0; i--) {
+    const p = activeParticles[i];
+    const elapsed = now - p.startTime;
+    if (elapsed >= p.life) {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+      activeParticles.splice(i, 1);
+      continue;
+    }
+    const t = elapsed / p.life;
+    p.vy += p.gravity;
+    p.mesh.position.x += p.vx;
+    p.mesh.position.y += p.vy * (1 - t * 0.4);
+    p.mesh.position.z += p.vz;
+    p.mesh.material.opacity = 1 - t;
+    const s = 1 - t * 0.4;
+    p.mesh.scale.set(s, s, s);
+  }
+}
+
 function handleGlobalInteraction() {
   // 1. Interagir com a Loja
   const distToShop = playerGroup.position.distanceTo(shopInteractionPos);
@@ -1872,6 +2123,7 @@ function handleGlobalInteraction() {
         animConfig.currentStored = 0;
         updateSignTexture(key); // Reseta o texto no balão
         playSound('drop');
+        spawnParticleBurst(animConfig.collectPos, { count: 10, color: 0xffd54f, size: 0.08, spread: 1.2, upward: 0.045, life: 600 });
         updateUIElements();
       }
       return;
@@ -1901,6 +2153,7 @@ function interactWithNearestPlot() {
       nearestPlot.material = plotMaterials.tilled;
       nearestPlot.userData.state = 1;
       playSound('till');
+      spawnParticleBurst(nearestPlot.position, { count: 9, color: 0x6d4c41, size: 0.06, spread: 1.3, upward: 0.02, life: 480 });
       registerQuestAction('till');
     } 
     else if (state === 1) {
@@ -1915,12 +2168,17 @@ function interactWithNearestPlot() {
       nearestPlot.userData.state = 2;
       setCropStage(nearestPlot, 0); // sementes plantadas na terra
       playSound('plant');
+      spawnParticleBurst(nearestPlot.position, { count: 7, color: 0x8bc34a, size: 0.055, spread: 0.8, upward: 0.03, life: 500 });
       registerQuestAction('plant');
     } 
     else if (state === 2) {
       nearestPlot.material = plotMaterials.watered;
       nearestPlot.userData.state = 3;
       playSound('water');
+      spawnParticleBurst(
+        new THREE.Vector3(nearestPlot.position.x, nearestPlot.position.y + 0.6, nearestPlot.position.z),
+        { count: 10, color: 0x4fc3f7, size: 0.05, spread: 0.5, upward: -0.01, gravity: -0.0035, life: 520 }
+      );
       registerQuestAction('water');
       triggerCropGrowth(nearestPlot);
     }
@@ -1934,6 +2192,7 @@ function interactWithNearestPlot() {
 
       playerData.inventory[crop.cropId] = (playerData.inventory[crop.cropId] || 0) + 1;
       playSound('drop');
+      spawnParticleBurst(nearestPlot.position, { count: 11, color: 0xffd54f, size: 0.07, spread: 1.1, upward: 0.045, life: 600 });
       updateUIElements();
 
       nearestPlot.material = plotMaterials.grass;
@@ -2172,6 +2431,9 @@ function checkCollision(targetPosition) {
 
 function animate() {
   requestAnimationFrame(animate);
+
+  animateDecorativeClouds();
+  updateParticles();
 
   if (!isGameStarted) {
     const time = Date.now() * 0.0005;
