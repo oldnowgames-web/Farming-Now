@@ -496,12 +496,29 @@ function createFenceRow(startX, startZ, length, isHorizontal = true, includeLast
     new THREE.Vector3(boxWidth, 1.2, boxDepth)
   );
   colliders.push(fenceBox);
+
+  return { group: fenceGroup, colliderBox: fenceBox };
 }
 
-// Cerca da Horta
-createFenceRow(-5, -8.0, 10, true, false);       
-createFenceRow(-5, -8.0, 6.0, false, true);      
-createFenceRow(5, -8.0, 6.0, false, true);       
+// Remove uma cerca previamente criada (mesh da cena + collider), usado ao
+// reconstruir cercados de animais quando o jogador compra uma expansão.
+function removeFenceRow(fenceRef) {
+  if (!fenceRef) return;
+  scene.remove(fenceRef.group);
+  fenceRef.group.traverse((child) => {
+    if (child.isMesh) {
+      child.geometry.dispose();
+      child.material.dispose();
+    }
+  });
+  const idx = colliders.indexOf(fenceRef.colliderBox);
+  if (idx !== -1) colliders.splice(idx, 1);
+}
+
+// Cerca da Horta (expandida para acomodar mais canteiros — grid 5x4)
+createFenceRow(-6.5, -11.25, 13, true, false);
+createFenceRow(-6.5, -11.25, 9.5, false, true);
+createFenceRow(6.5, -11.25, 9.5, false, true);
 
 // Gera uma textura de placa de madeira com texto (usada nas placas dos prédios).
 // O tamanho da fonte diminui automaticamente até o texto caber na placa.
@@ -660,19 +677,22 @@ function createDairyFactoryBuilding(x, z) {
 const animalTypes = {
   chicken: { 
     id: 'chicken', name: 'Galinha', price: 60, icon: '🐓', 
-    penCenter: { x: -14, z: 2 }, penSize: 5,
+    penCenter: { x: -14, z: 2 }, penSize: 5, expansionDirection: 'x-',
+    baseCapacity: 10, capacityLevel: 1, expansionBaseCost: 180, expansionCostGrowth: 1.5,
     product: 'egg', productName: 'Ovo', productPlural: 'Ovos', productIcon: '🥚', productPrice: 6, produceTime: 20000,
     currentStored: 0
   },
   cow: { 
     id: 'cow', name: 'Vaca', price: 160, icon: '🐄', 
-    penCenter: { x: 0, z: 10 }, penSize: 7,
+    penCenter: { x: 0, z: 10 }, penSize: 7, expansionDirection: 'z+',
+    baseCapacity: 5, capacityLevel: 1, expansionBaseCost: 260, expansionCostGrowth: 1.5,
     product: 'milk', productName: 'Leite', productPlural: 'Leites', productIcon: '🥛', productPrice: 10, produceTime: 28000,
     currentStored: 0
   },
   sheep: { 
     id: 'sheep', name: 'Ovelha', price: 130, icon: '🐑', 
-    penCenter: { x: 14, z: 2 }, penSize: 6,
+    penCenter: { x: 14, z: 2 }, penSize: 6, expansionDirection: 'x+',
+    baseCapacity: 5, capacityLevel: 1, expansionBaseCost: 240, expansionCostGrowth: 1.5,
     product: 'wool', productName: 'Lã', productPlural: 'Lãs', productIcon: '🧶', productPrice: 22, produceTime: 30000,
     currentStored: 0
   }
@@ -736,37 +756,93 @@ function updateSignTexture(type) {
   config.balloonMesh.material.needsUpdate = true;
 }
 
-function createPen(center, size, type) {
-  const half = size / 2;
-  createFenceRow(center.x - half, center.z - half, size, true, true);
-  createFenceRow(center.x - half, center.z + half, size, true, true);
-  createFenceRow(center.x - half, center.z - half, size, false, true);
-  createFenceRow(center.x + half, center.z - half, size, false, true);
+// Calcula o retângulo total (todos os segmentos de cercado já comprados) para
+// um tipo de animal, com base no nível de capacidade atual. Cada tipo cresce
+// numa direção fixa (o lado oposto fica ancorado, o cercado "estica" pro lado).
+function computeAnimalAreaForLevel(type) {
+  const cfg = animalTypes[type];
+  const half = cfg.penSize / 2;
+  const gap = 2; // espaço entre segmentos de cercado
+  const n = cfg.capacityLevel;
+  const span = n * cfg.penSize + (n - 1) * gap;
 
-  // Posição interativa na frente do cercado
-  const collectPos = new THREE.Vector3(center.x, 0, center.z + half + 0.8);
-  animalTypes[type].collectPos = collectPos;
+  let leftX, rightX, nearZ, farZ;
+  if (cfg.expansionDirection === 'x-') {
+    rightX = cfg.penCenter.x + half;
+    leftX = rightX - span;
+    nearZ = cfg.penCenter.z - half;
+    farZ = cfg.penCenter.z + half;
+  } else if (cfg.expansionDirection === 'x+') {
+    leftX = cfg.penCenter.x - half;
+    rightX = leftX + span;
+    nearZ = cfg.penCenter.z - half;
+    farZ = cfg.penCenter.z + half;
+  } else { // 'z+'
+    leftX = cfg.penCenter.x - half;
+    rightX = cfg.penCenter.x + half;
+    nearZ = cfg.penCenter.z - half;
+    farZ = nearZ + span;
+  }
+
+  return {
+    leftX, rightX, nearZ, farZ,
+    centerX: (leftX + rightX) / 2,
+    centerZ: (nearZ + farZ) / 2,
+    width: rightX - leftX,
+    depth: farZ - nearZ
+  };
+}
+
+// (Re)constrói a cerca de um tipo de animal a partir do nível de capacidade
+// atual — remove a cerca antiga (se houver) e monta uma maior no lugar.
+function rebuildAnimalPenFence(type) {
+  const cfg = animalTypes[type];
+
+  if (cfg.fenceRefs) {
+    cfg.fenceRefs.forEach(removeFenceRow);
+  }
+
+  const area = computeAnimalAreaForLevel(type);
+  cfg.area = area;
+
+  cfg.fenceRefs = [
+    createFenceRow(area.leftX, area.nearZ, area.width, true, true),
+    createFenceRow(area.leftX, area.farZ, area.width, true, true),
+    createFenceRow(area.leftX, area.nearZ, area.depth, false, true),
+    createFenceRow(area.rightX, area.nearZ, area.depth, false, true)
+  ];
 
   // Centro do cercado + raio de aproximação (usado para tocar o som ao se aproximar do animal)
-  animalTypes[type].penCenterVec = new THREE.Vector3(center.x, 0, center.z);
-  animalTypes[type].approachRadius = half + 3.5;
+  cfg.penCenterVec = new THREE.Vector3(area.centerX, 0, area.centerZ);
+  cfg.approachRadius = Math.max(area.width, area.depth) / 2 + 3.5;
 
-  // BALÃO FLUTUANTE 3D (Sem poste de madeira!)
-  const initialText = `${animalTypes[type].productIcon} x0`;
+  // Posição interativa/balão sempre na borda "de frente" do cercado (lado +Z)
+  const collectX = area.centerX;
+  const collectZ = area.farZ + 0.8;
+  if (!cfg.collectPos) cfg.collectPos = new THREE.Vector3();
+  cfg.collectPos.set(collectX, 0, collectZ);
+
+  if (cfg.balloonMesh) {
+    cfg.balloonMesh.position.set(collectX, 2.2, collectZ);
+  }
+}
+
+// Cria o balão flutuante 3D de um tipo de animal na posição já calculada (chame
+// DEPOIS de rebuildAnimalPenFence, que define collectPos pela primeira vez).
+function createPenBalloon(type) {
+  const cfg = animalTypes[type];
+  const initialText = `${cfg.productIcon} x0`;
   const balloonMat = new THREE.MeshBasicMaterial({
     map: createCloudBalloonTexture(initialText),
     transparent: true
   });
 
-  // Placa fina flutuando como balão
   const balloonMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.9), balloonMat);
-  balloonMesh.position.set(center.x, 2.2, center.z + half + 0.8); // Flutuando a 2.2m de altura
-
+  balloonMesh.position.set(cfg.collectPos.x, 2.2, cfg.collectPos.z);
   scene.add(balloonMesh);
 
-  animalTypes[type].balloonMesh = balloonMesh;
-  
-  // Guardado para a animação flutuante
+  cfg.balloonMesh = balloonMesh;
+
   floatingBalloons.push({
     mesh: balloonMesh,
     baseY: 2.2,
@@ -774,9 +850,10 @@ function createPen(center, size, type) {
   });
 }
 
-createPen(animalTypes.chicken.penCenter, animalTypes.chicken.penSize, 'chicken');
-createPen(animalTypes.cow.penCenter, animalTypes.cow.penSize, 'cow');
-createPen(animalTypes.sheep.penCenter, animalTypes.sheep.penSize, 'sheep');
+['chicken', 'cow', 'sheep'].forEach(type => {
+  rebuildAnimalPenFence(type);
+  createPenBalloon(type);
+});
 
 // ---------- Helper para criar partes dos animais (estilo blocky/voxel) ----------
 function addPart(group, geometry, color, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
@@ -991,18 +1068,17 @@ function spawnAnimal3D(type) {
 
   const group = model.group;
 
-  const center = animalConfig.penCenter;
-  const offset = (Math.random() - 0.5) * (animalConfig.penSize - 2);
-  group.position.set(center.x + offset, 0, center.z + offset);
+  const area = animalConfig.area;
+  const offsetX = (Math.random() - 0.5) * (area.width - 1.5);
+  const offsetZ = (Math.random() - 0.5) * (area.depth - 1.5);
+  group.position.set(area.centerX + offsetX, 0, area.centerZ + offsetZ);
   scene.add(group);
 
   const animalObj = {
     mesh: group,
     model: model,
     type: type,
-    center: center,
-    bounds: animalConfig.penSize - 1.5,
-    target: new THREE.Vector3(center.x + offset, 0, center.z + offset),
+    target: new THREE.Vector3(group.position.x, 0, group.position.z),
     speed: 0.02,
     walkPhase: Math.random() * Math.PI * 2,
     timer: setInterval(() => {
@@ -1022,13 +1098,16 @@ function produceItemForPen(type) {
 
 function updateAnimalsMovement() {
   activeAnimals3D.forEach(anim => {
+    // Sempre lê a área ATUAL do cercado (não uma cópia), então se o jogador
+    // expandir o cercado, os animais já existentes passam a vagar pela área nova também.
+    const area = animalTypes[anim.type].area;
     const distToTarget = anim.mesh.position.distanceTo(anim.target);
     const isPaused = distToTarget < 0.15;
 
     if (distToTarget < 0.3 || Math.random() < 0.005) {
-      const offsetX = (Math.random() - 0.5) * anim.bounds;
-      const offsetZ = (Math.random() - 0.5) * anim.bounds;
-      anim.target.set(anim.center.x + offsetX, 0, anim.center.z + offsetZ);
+      const offsetX = (Math.random() - 0.5) * (area.width - 1.5);
+      const offsetZ = (Math.random() - 0.5) * (area.depth - 1.5);
+      anim.target.set(area.centerX + offsetX, 0, area.centerZ + offsetZ);
     }
 
     const dir = new THREE.Vector3().subVectors(anim.target, anim.mesh.position).normalize();
@@ -1091,9 +1170,14 @@ function animateFloatingBalloons() {
 const cropsData = {
   wheat_seed: { id: 'wheat_seed', cropId: 'wheat', name: 'Trigo', seedName: 'Semente de Trigo', buyPrice: 6, sellPrice: 9, seedIcon: '🌱', cropIcon: '🌾', color: 0xffeb3b, growTime: 3000 },
   carrot_seed: { id: 'carrot_seed', cropId: 'carrot', name: 'Cenoura', seedName: 'Semente de Cenoura', buyPrice: 10, sellPrice: 15, seedIcon: '🌱', cropIcon: '🥕', color: 0xff9800, growTime: 4000 },
+  lettuce_seed: { id: 'lettuce_seed', cropId: 'lettuce', name: 'Alface', seedName: 'Semente de Alface', buyPrice: 8, sellPrice: 12, seedIcon: '🌱', cropIcon: '🥬', color: 0x8bc34a, growTime: 3500 },
+  potato_seed: { id: 'potato_seed', cropId: 'potato', name: 'Batata', seedName: 'Semente de Batata', buyPrice: 12, sellPrice: 18, seedIcon: '🌱', cropIcon: '🥔', color: 0xa1887f, growTime: 4500 },
   tomato_seed: { id: 'tomato_seed', cropId: 'tomato', name: 'Tomate', seedName: 'Semente de Tomate', buyPrice: 16, sellPrice: 24, seedIcon: '🌱', cropIcon: '🍅', color: 0xf44336, growTime: 5000 },
+  strawberry_seed: { id: 'strawberry_seed', cropId: 'strawberry', name: 'Morango', seedName: 'Semente de Morango', buyPrice: 20, sellPrice: 30, seedIcon: '🌱', cropIcon: '🍓', color: 0xe53935, growTime: 5500 },
   corn_seed: { id: 'corn_seed', cropId: 'corn', name: 'Milho', seedName: 'Semente de Milho', buyPrice: 24, sellPrice: 34, seedIcon: '🌱', cropIcon: '🌽', color: 0xcddc39, growTime: 6000 },
-  pumpkin_seed: { id: 'pumpkin_seed', cropId: 'pumpkin', name: 'Abóbora', seedName: 'Semente de Abóbora', buyPrice: 35, sellPrice: 52, seedIcon: '🌱', cropIcon: '🎃', color: 0xff5722, growTime: 8000 }
+  grape_seed: { id: 'grape_seed', cropId: 'grape', name: 'Uva', seedName: 'Semente de Uva', buyPrice: 30, sellPrice: 45, seedIcon: '🌱', cropIcon: '🍇', color: 0x6a1b9a, growTime: 7000 },
+  pumpkin_seed: { id: 'pumpkin_seed', cropId: 'pumpkin', name: 'Abóbora', seedName: 'Semente de Abóbora', buyPrice: 35, sellPrice: 52, seedIcon: '🌱', cropIcon: '🎃', color: 0xff5722, growTime: 8000 },
+  watermelon_seed: { id: 'watermelon_seed', cropId: 'watermelon', name: 'Melancia', seedName: 'Semente de Melancia', buyPrice: 40, sellPrice: 60, seedIcon: '🌱', cropIcon: '🍉', color: 0x388e3c, growTime: 9000 }
 };
 
 // ===============================================
@@ -1119,15 +1203,38 @@ const playerData = {
   coins: 80,
   selectedSeed: 'wheat_seed',
   inventory: { 
-    wheat_seed: 5, carrot_seed: 2, tomato_seed: 0, corn_seed: 0, pumpkin_seed: 0, 
-    wheat: 0, carrot: 0, tomato: 0, corn: 0, pumpkin: 0,
+    wheat_seed: 5, carrot_seed: 2, lettuce_seed: 0, potato_seed: 0, tomato_seed: 0, strawberry_seed: 0, corn_seed: 0, grape_seed: 0, pumpkin_seed: 0, watermelon_seed: 0,
+    wheat: 0, carrot: 0, lettuce: 0, potato: 0, tomato: 0, strawberry: 0, corn: 0, grape: 0, pumpkin: 0, watermelon: 0,
     egg: 0, milk: 0, wool: 0,
     cheese: 0, yogurt: 0, cream: 0, butter: 0
   },
   animals: { chicken: 0, cow: 0, sheep: 0 }
 };
 
-window.changeSelectedSeed = function(seedId) { playerData.selectedSeed = seedId; };
+window.changeSelectedSeed = function(seedId) {
+  playerData.selectedSeed = seedId;
+  renderSeedHotbar();
+};
+
+// Desenha o hotbar de sementes em quadradinhos (substitui o antigo dropdown).
+// Cada quadrado mostra o ícone da semente + quantidade no inventário, e
+// destaca a semente atualmente equipada.
+function renderSeedHotbar() {
+  const hotbar = document.getElementById('seed-hotbar');
+  if (!hotbar) return;
+
+  hotbar.innerHTML = '';
+  Object.values(cropsData).forEach(crop => {
+    const count = playerData.inventory[crop.id] || 0;
+    const isSelected = playerData.selectedSeed === crop.id;
+    const slot = document.createElement('button');
+    slot.className = 'seed-slot' + (isSelected ? ' selected' : '');
+    slot.title = crop.seedName;
+    slot.innerHTML = `<span class="seed-slot-icon">${crop.cropIcon}</span><span class="seed-slot-count">${count}</span>`;
+    slot.onclick = () => changeSelectedSeed(crop.id);
+    hotbar.appendChild(slot);
+  });
+}
 
 function updateUIElements() {
   const coinsEl = document.getElementById('coins-count');
@@ -1136,10 +1243,9 @@ function updateUIElements() {
   const seedsShopList = document.getElementById('shop-list-seeds');
   const animalsShopList = document.getElementById('shop-list-animals');
   const buildingsShopList = document.getElementById('shop-list-buildings');
-  const selectEl = document.getElementById('seed-select');
 
   if (coinsEl) coinsEl.textContent = playerData.coins;
-  if (selectEl) selectEl.value = playerData.selectedSeed;
+  renderSeedHotbar();
 
   // Inventário de Itens
   if (itemsList) {
@@ -1194,7 +1300,8 @@ function updateUIElements() {
       const count = playerData.animals[anim.id] || 0;
       if (count > 0) {
         empty = false;
-        animalsList.innerHTML += `<div class="inventory-item"><span>${anim.icon} ${anim.name}s no Cercado</span><span><b>x${count}</b></span></div>`;
+        const capacity = getAnimalCapacity(anim.id);
+        animalsList.innerHTML += `<div class="inventory-item"><span>${anim.icon} ${anim.name}s no Cercado</span><span><b>${count} / ${capacity}</b></span></div>`;
       }
     });
 
@@ -1254,13 +1361,25 @@ function updateUIElements() {
   if (animalsShopList) {
     animalsShopList.innerHTML = '';
     Object.values(animalTypes).forEach(anim => {
+      const owned = playerData.animals[anim.id] || 0;
+      const capacity = getAnimalCapacity(anim.id);
+      const isFull = owned >= capacity;
+      const expansionCost = getPenExpansionCost(anim.id);
+
       animalsShopList.innerHTML += `
         <div class="shop-item">
           <div>
             <div><b>${anim.icon} ${anim.name}</b></div>
             <small style="color:#d7ccc8">Preço: 💰${anim.price} | Produz: ${anim.productIcon} ${anim.productName}</small>
+            <div class="pen-capacity-bar">
+              <div class="pen-capacity-fill" style="width:${Math.min(100, (owned / capacity) * 100)}%"></div>
+            </div>
+            <small style="color:${isFull ? '#ff8a65' : '#a5d6a7'}">🏠 Cercado: ${owned} / ${capacity}${isFull ? ' — Cheio!' : ''}</small>
           </div>
-          <button class="buy-btn" onclick="buyAnimal('${anim.id}')">Comprar</button>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <button class="buy-btn" ${isFull ? 'disabled' : ''} onclick="buyAnimal('${anim.id}')">${isFull ? 'Cercado Cheio' : 'Comprar'}</button>
+            <button class="expand-btn" onclick="buyPenExpansion('${anim.id}')">🔨 Expandir (+${anim.baseCapacity}) 💰${expansionCost}</button>
+          </div>
         </div>
       `;
     });
@@ -1312,8 +1431,21 @@ window.sellItem = function(itemId, price) {
   }
 };
 
+// Capacidade atual e custo da próxima expansão de um tipo de animal
+function getAnimalCapacity(type) {
+  const anim = animalTypes[type];
+  return anim.baseCapacity * anim.capacityLevel;
+}
+
+function getPenExpansionCost(type) {
+  const anim = animalTypes[type];
+  return Math.round(anim.expansionBaseCost * Math.pow(anim.expansionCostGrowth, anim.capacityLevel - 1));
+}
+
 window.buyAnimal = function(type) {
   const anim = animalTypes[type];
+  const capacity = getAnimalCapacity(type);
+  if ((playerData.animals[type] || 0) >= capacity) return; // cercado cheio
   if (playerData.coins >= anim.price) {
     playerData.coins -= anim.price;
     playerData.animals[type] = (playerData.animals[type] || 0) + 1;
@@ -1321,6 +1453,20 @@ window.buyAnimal = function(type) {
     playSound('buy');
     updateUIElements();
   }
+};
+
+// Compra de espaço: expande o cercado de um tipo de animal, aumentando a
+// capacidade permanentemente. O custo sobe a cada compra (fica cada vez mais caro).
+window.buyPenExpansion = function(type) {
+  const anim = animalTypes[type];
+  const cost = getPenExpansionCost(type);
+  if (playerData.coins < cost) return;
+
+  playerData.coins -= cost;
+  anim.capacityLevel += 1;
+  rebuildAnimalPenFence(type);
+  playSound('buy');
+  updateUIElements();
 };
 
 window.buyDairyFactory = function() {
@@ -1674,6 +1820,187 @@ const cropStageBuilders = {
       addCropPart(g, new THREE.BoxGeometry(0.06, 0.12, 0.06), 0x5d4037, 0, 0.42, 0);
       return g;
     }
+  ],
+
+  // ---------------- ALFACE: sementinha -> rosetas de folhas verdes ----------------
+  lettuce: [
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.SphereGeometry(0.04, 6, 6), 0x8d6e63, 0, 0.04, 0);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      [[0, 0, 0], [0.05, 0, 0.03], [-0.05, 0, -0.02]].forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.ConeGeometry(0.035, 0.12, 6), 0x8bc34a, x, 0.06 + y, z);
+        leaf.rotation.x = Math.PI;
+      });
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      const positions = [[0, 0.08, 0], [0.08, 0.07, 0.05], [-0.08, 0.07, -0.04], [0.04, 0.07, -0.08], [-0.05, 0.07, 0.07]];
+      positions.forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.SphereGeometry(0.08, 8, 6), 0x7cb342, x, y, z);
+        leaf.scale.set(1, 0.55, 1);
+      });
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      const outer = [[0, 0.09, 0], [0.11, 0.08, 0.06], [-0.11, 0.08, -0.05], [0.05, 0.08, -0.11], [-0.06, 0.08, 0.1], [0.1, 0.08, -0.06], [-0.1, 0.08, 0.06]];
+      outer.forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.SphereGeometry(0.1, 8, 6), 0x689f38, x, y, z);
+        leaf.scale.set(1, 0.5, 1);
+      });
+      const core = addCropPart(g, new THREE.SphereGeometry(0.08, 8, 8), 0xaed581, 0, 0.14, 0);
+      core.scale.set(1, 0.75, 1);
+      return g;
+    }
+  ],
+
+  // ---------------- BATATA: broto verde -> folhagem farta com tubérculos na base ----------------
+  potato: [
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.SphereGeometry(0.045, 6, 6), 0x6d4c41, 0, 0.05, 0);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      [[-0.04, 0], [0.04, 0.02], [0, -0.04]].forEach(([x, z]) => addCropPart(g, new THREE.ConeGeometry(0.03, 0.15, 6), 0x66bb6a, x, 0.09, z));
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      [[-0.06, 0], [0.06, 0.03], [0, -0.05], [0.02, 0.05]].forEach(([x, z]) => addCropPart(g, new THREE.ConeGeometry(0.035, 0.24, 6), 0x4caf50, x, 0.15, z));
+      const tuber = addCropPart(g, new THREE.SphereGeometry(0.06, 8, 8), 0xa1887f, 0, 0.05, 0.01);
+      tuber.scale.set(1.1, 0.75, 1.1);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      [[-0.08, 0], [0.08, 0.03], [0, -0.07], [0.03, 0.07], [-0.04, -0.04]].forEach(([x, z]) => addCropPart(g, new THREE.ConeGeometry(0.04, 0.3, 6), 0x388e3c, x, 0.2, z));
+      const tuberSpots = [[0.05, 0.04, 0.05], [-0.06, 0.035, -0.02], [0.01, 0.04, -0.06]];
+      tuberSpots.forEach(([x, y, z]) => {
+        const tuber = addCropPart(g, new THREE.SphereGeometry(0.075, 8, 8), 0x8d6e63, x, y, z);
+        tuber.scale.set(1.1, 0.7, 1.15);
+      });
+      return g;
+    }
+  ],
+
+  // ---------------- MORANGO: mudinha baixa -> arbusto com morangos vermelhos ----------------
+  strawberry: [
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.SphereGeometry(0.04, 6, 6), 0x5d4037, 0, 0.04, 0);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      [[-0.05, 0, 0], [0.05, 0, 0.03], [0, 0, -0.05]].forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.SphereGeometry(0.05, 6, 6), 0x66bb6a, x, 0.05 + y, z);
+        leaf.scale.set(1, 0.4, 1);
+      });
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      const bush = addCropPart(g, new THREE.SphereGeometry(0.1, 8, 8), 0x4caf50, 0, 0.06, 0);
+      bush.scale.set(1, 0.5, 1);
+      [[0.08, 0.09, 0.03], [-0.07, 0.09, -0.04]].forEach(([x, y, z]) => addCropPart(g, new THREE.SphereGeometry(0.02, 6, 6), 0xffffff, x, y, z));
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      const bush = addCropPart(g, new THREE.SphereGeometry(0.12, 8, 8), 0x388e3c, 0, 0.07, 0);
+      bush.scale.set(1, 0.5, 1);
+      const berries = [[0.09, 0.05, 0.04], [-0.08, 0.05, -0.03], [0.02, 0.04, -0.09], [-0.03, 0.04, 0.08]];
+      berries.forEach(([x, y, z]) => {
+        const berry = addCropPart(g, new THREE.SphereGeometry(0.045, 8, 8), 0xe53935, x, y, z);
+        berry.scale.set(1, 1.15, 1);
+        addCropPart(g, new THREE.ConeGeometry(0.02, 0.03, 5), 0x66bb6a, x, y + 0.045, z);
+      });
+      return g;
+    }
+  ],
+
+  // ---------------- UVA: broto -> videira com folhas -> cachos pendurados ----------------
+  grape: [
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.SphereGeometry(0.04, 6, 6), 0x4a148c, 0, 0.04, 0);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.CylinderGeometry(0.018, 0.022, 0.2, 6), 0x558b2f, 0, 0.1, 0);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.CylinderGeometry(0.02, 0.026, 0.42, 6), 0x33691e, 0, 0.21, 0);
+      [[0.1, 0.28, 0], [-0.1, 0.36, 0.02]].forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.SphereGeometry(0.08, 8, 6), 0x558b2f, x, y, z);
+        leaf.scale.set(1, 0.3, 1);
+      });
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.CylinderGeometry(0.022, 0.03, 0.58, 6), 0x33691e, 0, 0.29, 0);
+      [[0.11, 0.42, 0], [-0.11, 0.5, 0.02], [0.06, 0.56, -0.06]].forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.SphereGeometry(0.09, 8, 6), 0x558b2f, x, y, z);
+        leaf.scale.set(1, 0.3, 1);
+      });
+      // Cacho de uvas pendurado
+      const grapePositions = [
+        [0, 0.28, 0.05], [0.035, 0.24, 0.04], [-0.035, 0.24, 0.04],
+        [0.02, 0.19, 0.03], [-0.02, 0.19, 0.03], [0, 0.14, 0.02]
+      ];
+      grapePositions.forEach(([x, y, z]) => addCropPart(g, new THREE.SphereGeometry(0.038, 8, 8), 0x6a1b9a, x, y, z));
+      return g;
+    }
+  ],
+
+  // ---------------- MELANCIA: vinha rasteira -> grande melancia listrada ----------------
+  watermelon: [
+    () => {
+      const g = new THREE.Group();
+      addCropPart(g, new THREE.SphereGeometry(0.045, 6, 6), 0x212121, 0, 0.045, 0);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      const flat = new THREE.SphereGeometry(0.09, 8, 8);
+      addCropPart(g, flat, 0x66bb6a, 0, 0.06, 0).scale.set(1, 0.4, 1);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      [[-0.11, 0.05, 0], [0.11, 0.05, 0.06], [0, 0.05, -0.11]].forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.SphereGeometry(0.12, 8, 8), 0x4caf50, x, y, z);
+        leaf.scale.set(1, 0.35, 1);
+      });
+      addCropPart(g, new THREE.SphereGeometry(0.1, 8, 8), 0x66bb6a, 0, 0.1, 0.02).scale.set(1, 0.9, 1);
+      return g;
+    },
+    () => {
+      const g = new THREE.Group();
+      [[-0.24, 0.04, 0.16], [0.22, 0.04, -0.13], [-0.05, 0.04, -0.24]].forEach(([x, y, z]) => {
+        const leaf = addCropPart(g, new THREE.SphereGeometry(0.13, 8, 8), 0x388e3c, x, y, z);
+        leaf.scale.set(1, 0.3, 1);
+      });
+      const melon = addCropPart(g, new THREE.SphereGeometry(0.3, 12, 12), 0x66bb6a, 0, 0.26, 0);
+      melon.scale.set(1, 0.92, 1);
+      // Listras escuras (faixas curvas ao redor da melancia)
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2;
+        const stripe = addCropPart(g, new THREE.BoxGeometry(0.05, 0.42, 0.08), 0x1b5e20, Math.sin(angle) * 0.29, 0.26, Math.cos(angle) * 0.29, 0, angle, 0);
+      }
+      return g;
+    }
   ]
 };
 
@@ -1739,8 +2066,9 @@ const plotMaterials = {
   watered: new THREE.MeshLambertMaterial({ color: 0x3e2723 })
 };
 
-const gridRows = 3;
-const gridCols = 3;
+const gridRows = 4;
+const gridCols = 5;
+const gardenCenterZ = -6.0; // mantém a fileira da frente próxima da posição original, expandindo pra trás com folga da casa
 
 for (let r = 0; r < gridRows; r++) {
   for (let c = 0; c < gridCols; c++) {
@@ -1748,7 +2076,7 @@ for (let r = 0; r < gridRows; r++) {
     const plot = new THREE.Mesh(geo, plotMaterials.grass.clone());
 
     plot.position.x = (c - (gridCols - 1) / 2) * plotSize;
-    plot.position.z = (r - (gridRows - 1) / 2) * plotSize - 5;
+    plot.position.z = (r - (gridRows - 1) / 2) * plotSize + gardenCenterZ;
     plot.position.y = 0.05;
     plot.castShadow = true;
     plot.receiveShadow = true;

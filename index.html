@@ -59,15 +59,9 @@
   <!-- HUD TOPO DIREITO -->
   <div id="hud" class="hidden">
     <div class="item">💰 Moedas: <span id="coins-count">20</span></div>
-    <div class="item">
-      🌱 Equipado: 
-      <select id="seed-select" onchange="changeSelectedSeed(this.value)">
-        <option value="wheat_seed">🌾 Trigo</option>
-        <option value="carrot_seed">🥕 Cenoura</option>
-        <option value="tomato_seed">🍅 Tomate</option>
-        <option value="corn_seed">🌽 Milho</option>
-        <option value="pumpkin_seed">🎃 Abóbora</option>
-      </select>
+    <div class="item seed-hotbar-item">
+      <div class="seed-hotbar-label">🌱 Sementes (Q troca)</div>
+      <div id="seed-hotbar" class="seed-hotbar"></div>
     </div>
     <button id="open-inventory-btn">🎒 Inventário</button>
   </div>
